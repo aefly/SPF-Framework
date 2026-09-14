@@ -5,17 +5,41 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
+
+    # FetchContent pulls in zlib, imgui, minhook, fmt, json, cpr (and its
+    # bundled libcurl) as source and builds them from scratch. Caching the
+    # populated/build _deps tree skips the clone + rebuild of these
+    # dependencies on cache hits, which is the bulk of the build time.
+    - name: Cache CMake FetchContent dependencies
+      uses: actions/cache@v6
+      with:
+        path: |
+          build/_deps
+        key: cmake-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt', 'cmake/patches/**') }}
+        restore-keys: |
+          cmake-deps-${{ runner.os }}-
 
     - name: Configure CMake
       # We use -A x64 for 64-bit build (SCS games are 64-bit)
-      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release -A x64
+      # FETCHCONTENT_UPDATES_DISCONNECTED skips the git update check for
+      # already-populated dependencies, which avoids an unnecessary network
+      # round-trip per dependency when the cache above is warm.
+      run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=Release -A x64 -DFETCHCONTENT_UPDATES_DISCONNECTED=ON
 
     - name: Build
-      run: cmake --build ${{github.workspace}}/build --config Release
+      run: cmake --build ${{github.workspace}}/build --config Release --parallel
